@@ -1,0 +1,53 @@
+{
+  "name": "admin",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "main": "index.ts",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "postinstall": "node ./scripts/copy-mapbox-worker.cjs",
+    "prestart": "node ./scripts/copy-mapbox-worker.cjs",
+    "start": "expo start --web --port 8090",
+    "prebuild": "node ./scripts/copy-mapbox-worker.cjs",
+    "build": "expo export --platform web",
+    "android": "expo start --android --port 8090",
+    "ios": "expo start --ios --port 8090",
+    "preweb": "node ./scripts/copy-mapbox-worker.cjs",
+    "web": "expo start --web --port 8090",
+    "lint": "expo lint",
+    "test:e2e": "playwright test",
+    "test:e2e:ui": "playwright test --ui"
+  },
+  "dependencies": {
+    "@expo/vector-icons": "^15.1.1",
+    "@take-me/shared": "*",
+    "dotenv": "^16.4.7",
+    "expo": "^54.0.33",
+    "expo-constants": "~17.0.3",
+    "expo-status-bar": "~3.0.9",
+    "mapbox-gl": "^2.15.0",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-native": "0.81.5",
+    "react-router-dom": "^6.30.3",
+    "recharts": "^3.8.1"
+  },
+  "devDependencies": {
+    "@babel/core": "^7.25.0",
+    "@playwright/test": "^1.51.0",
+    "@types/mapbox-gl": "^3.4.1",
+    "@types/react": "~19.1.10",
+    "@types/react-dom": "~19.1.0",
+    "typescript": "~5.9.2"
+  },
+  "overrides": {
+    "minimatch": "^10.2.1",
+    "react": "19.1.0",
+    "react-dom": "19.1.0",
+    "react-native": "0.81.5",
+    "tar": "^7.5.8"
+  }
+}
