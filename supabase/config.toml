@@ -1,0 +1,23 @@
+# Configuração local/deploy Supabase (functions).
+# Ajuste verify_jwt conforme o dashboard ao publicar.
+
+[api]
+enabled = true
+
+[functions.spedy-webhook]
+verify_jwt = false
+
+[functions.stripe-webhook]
+verify_jwt = false
+
+[functions.reconcile-fiscal-documents]
+verify_jwt = false
+
+[functions.issue-fiscal-document]
+verify_jwt = true
+
+[functions.get-fiscal-document-pdf]
+verify_jwt = true
+
+[functions.lookup-spedy-invoice]
+verify_jwt = true

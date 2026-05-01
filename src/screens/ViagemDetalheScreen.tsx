@@ -31,7 +31,10 @@ import {
   fetchBookingDetailForAdmin,
   fetchMotoristas,
   fetchShipmentsForScheduledTrip,
+  fetchSpedyInvoicePdfAsBlob,
+  lookupSpedyInvoiceByStripePi,
 } from '../data/queries';
+import type { SpedyInvoiceLookupItem } from '../data/types';
 import { supabase } from '../lib/supabase';
 import { resolveStorageDisplayUrl } from '../lib/storageDisplayUrl';
 import type { BookingDetailForAdmin, TripShipmentListItem } from '../data/types';
@@ -56,6 +59,29 @@ function rowFromDetail(d: BookingDetailForAdmin): ViagemRow {
 
 function fmtBRL(cents: number): string {
   return `R$ ${(cents / 100).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+function spedyStatusLabelPt(status: string): string {
+  const s: Record<string, string> = {
+    authorized: 'Autorizada',
+    rejected: 'Rejeitada',
+    canceled: 'Cancelada',
+    enqueued: 'Na fila',
+    created: 'Criada',
+    received: 'Recebida',
+    inContingent: 'Contingência',
+    denied: 'Denegada',
+    removed: 'Removida',
+    disabled: 'Inutilizada',
+  };
+  return s[status] || status || '—';
+}
+
+/** Prioriza nota autorizada; senão a mais recente da lista Spedy. */
+function pickBestSpedyInvoice(invoices: SpedyInvoiceLookupItem[]): SpedyInvoiceLookupItem | null {
+  if (!invoices.length) return null;
+  const auth = invoices.find((i) => i.status === 'authorized');
+  return auth ?? invoices[0];
 }
 
 const SHIPMENT_STATUS_LABEL: Record<string, string> = {
@@ -206,6 +232,61 @@ export default function ViagemDetalheScreen() {
   const [driverAvatarSrc, setDriverAvatarSrc] = useState<string | null>(null);
   const [passengerAvatarSrc, setPassengerAvatarSrc] = useState<string | null>(null);
   const [docActionToast, setDocActionToast] = useState<string | null>(null);
+  const [spedyNf, setSpedyNf] = useState<{
+    loading: boolean;
+    error: string | null;
+    invoices: SpedyInvoiceLookupItem[];
+  }>({ loading: false, error: null, invoices: [] });
+  const [nfPdfBusy, setNfPdfBusy] = useState(false);
+
+  const refetchSpedyNf = useCallback(async () => {
+    const pi = detail?.stripePaymentIntentId?.trim();
+    if (!pi) {
+      setSpedyNf({ loading: false, error: null, invoices: [] });
+      return;
+    }
+    setSpedyNf((prev) => ({ ...prev, loading: true, error: null }));
+    const res = await lookupSpedyInvoiceByStripePi(pi);
+    if (res.error) {
+      setSpedyNf({ loading: false, error: res.error, invoices: [] });
+      return;
+    }
+    setSpedyNf({ loading: false, error: null, invoices: res.data?.invoices ?? [] });
+  }, [detail?.stripePaymentIntentId]);
+
+  useEffect(() => {
+    setSpedyNf({ loading: false, error: null, invoices: [] });
+  }, [id]);
+
+  useEffect(() => {
+    if (loading) return;
+    void refetchSpedyNf();
+  }, [loading, id, refetchSpedyNf]);
+
+  const handleSpedyNfPdf = useCallback(async () => {
+    const best = pickBestSpedyInvoice(spedyNf.invoices);
+    if (!best) {
+      setDocActionToast('Nenhuma nota encontrada na Spedy para este pagamento.');
+      return;
+    }
+    setNfPdfBusy(true);
+    const { blob, error } = await fetchSpedyInvoicePdfAsBlob(best.id, best.model);
+    setNfPdfBusy(false);
+    if (error || !blob) {
+      setDocActionToast(error ?? 'Não foi possível obter o PDF. Se a nota ainda não estiver autorizada, aguarde ou abra a Spedy.');
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `nf-${best.id}.pdf`;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [spedyNf.invoices]);
 
   useEffect(() => {
     if (!docActionToast) return;
@@ -426,6 +507,8 @@ export default function ViagemDetalheScreen() {
     return rows;
   }, [detail, t]);
 
+  const bestSpedyInvoice = useMemo(() => pickBestSpedyInvoice(spedyNf.invoices), [spedyNf.invoices]);
+
   if (loading) {
     return React.createElement('div', { style: webStyles.detailPage },
       React.createElement('p', { style: { padding: 32, fontFamily: 'Inter, sans-serif' } }, 'Carregando…'));
@@ -585,10 +668,35 @@ export default function ViagemDetalheScreen() {
   },
     React.createElement('svg', { width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none', style: { display: 'block' } },
       React.createElement('path', { d: 'M9 18l6-6-6-6', stroke: '#0d0d0d', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' })));
+  /** PIN `bookings.pickup_code` — único por reserva; fica na secção Passageiros, acima dos cards (não por passageiro). */
+  const bookingPickupPinBlock = detail?.pickupCode?.trim()
+    ? React.createElement(
+        'div',
+        { style: { width: '100%', marginBottom: 20 } },
+        adminPinChipRow('Embarque — passageiro informa ao motorista (único para esta reserva)', detail.pickupCode, null),
+        React.createElement(
+          'p',
+          {
+            style: {
+              fontSize: 13,
+              color: '#767676',
+              fontFamily: 'Inter, sans-serif',
+              marginTop: 10,
+              marginBottom: 0,
+              lineHeight: 1.5,
+              maxWidth: 720,
+            },
+          },
+          'O mesmo código vale para todos os passageiros desta reserva. Encomendas na mesma viagem têm PINs na secção «Encomendas».',
+        ),
+      )
+    : null;
+
   const passageirosSection = React.createElement('div', { style: webStyles.detailPassageirosSection },
     React.createElement('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', marginBottom: 16 } },
       React.createElement('h2', { style: { ...webStyles.detailSectionTitle, margin: 0 } }, 'Passageiros'),
       passageirosChevronBtn),
+    bookingPickupPinBlock,
     React.createElement('div', { style: { display: 'flex', gap: 24, overflowX: 'auto' as const } },
       ...passengerDisplayRows.map((row, i) => passageiroCard(row, i))));
 
@@ -622,16 +730,111 @@ export default function ViagemDetalheScreen() {
       React.createElement('button', { type: 'button', style: webStyles.detailBackBtn, onClick: () => navigate(-1) }, arrowBackSvg, 'Voltar'),
       React.createElement('div', { style: { ...webStyles.detailDocBtns, gap: 16 } },
         acompanharTempoRealBtn,
-        React.createElement('button', {
-          type: 'button',
-          style: webStyles.detailDocBtn,
-          title: 'Em desenvolvimento — emissão fiscal ainda não disponível no painel.',
-          onClick: () => setDocActionToast('Emissão de nota fiscal ainda não está disponível neste painel.'),
-        },
-          React.createElement('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', style: { display: 'block' } },
-            React.createElement('path', { d: 'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z', stroke: '#0d0d0d', strokeWidth: 2 }),
-            React.createElement('path', { d: 'M14 2v6h6', stroke: '#0d0d0d', strokeWidth: 2 })),
-          'Ver NF'),
+        (() => {
+          const nfHintTitle =
+            'PDF fornecido pela Spedy. O envio da nota ao cliente fica na Spedy (integração Stripe), não neste painel.';
+          const pi = detail?.stripePaymentIntentId?.trim();
+          if (!pi) {
+            return React.createElement(
+              'div',
+              { key: 'nf-spedy', style: { display: 'flex', flexDirection: 'column' as const, gap: 4, maxWidth: 360 } },
+              React.createElement(
+                'span',
+                { style: { fontSize: 12, color: '#737373', fontFamily: 'Inter, sans-serif' } },
+                'Nota fiscal: sem cobrança Stripe nesta reserva.',
+              ),
+              React.createElement(
+                'span',
+                { style: { fontSize: 11, color: '#a3a3a3', fontFamily: 'Inter, sans-serif' }, title: nfHintTitle },
+                'Envio ao pagador: configure na Spedy.',
+              ),
+            );
+          }
+          if (spedyNf.loading) {
+            return React.createElement(
+              'span',
+              { key: 'nf-spedy', style: { fontSize: 12, color: '#737373', fontFamily: 'Inter, sans-serif' } },
+              'Nota fiscal: consultando Spedy…',
+            );
+          }
+          if (spedyNf.error) {
+            return React.createElement(
+              'div',
+              { key: 'nf-spedy', style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' as const } },
+              React.createElement(
+                'span',
+                { style: { fontSize: 12, color: '#b91c1c', fontFamily: 'Inter, sans-serif', maxWidth: 280 } },
+                spedyNf.error,
+              ),
+              React.createElement(
+                'button',
+                { type: 'button', style: webStyles.detailDocBtn, onClick: () => void refetchSpedyNf() },
+                'Tentar novamente',
+              ),
+            );
+          }
+          if (!bestSpedyInvoice) {
+            return React.createElement(
+              'div',
+              { key: 'nf-spedy', style: { display: 'flex', flexDirection: 'column' as const, gap: 6, maxWidth: 420 } },
+              React.createElement(
+                'span',
+                { style: { fontSize: 12, color: '#737373', fontFamily: 'Inter, sans-serif' } },
+                'Nenhuma nota encontrada na Spedy para este pagamento.',
+              ),
+              React.createElement(
+                'span',
+                { style: { fontSize: 11, color: '#a3a3a3', fontFamily: 'Inter, sans-serif' }, title: nfHintTitle },
+                'Envio ao pagador: configure na Spedy.',
+              ),
+              React.createElement(
+                'button',
+                { type: 'button', style: webStyles.detailDocBtn, onClick: () => void refetchSpedyNf() },
+                'Atualizar',
+              ),
+            );
+          }
+          return React.createElement(
+            'div',
+            { key: 'nf-spedy', style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' as const } },
+            React.createElement(
+              'span',
+              {
+                style: { fontSize: 12, color: '#404040', fontWeight: 600, fontFamily: 'Inter, sans-serif' },
+                title: nfHintTitle,
+              },
+              `NF: ${spedyStatusLabelPt(bestSpedyInvoice.status)}`,
+            ),
+            React.createElement(
+              'button',
+              {
+                type: 'button',
+                style: webStyles.detailDocBtn,
+                title: nfHintTitle,
+                disabled: nfPdfBusy,
+                onClick: () => void handleSpedyNfPdf(),
+              },
+              nfPdfBusy
+                ? 'Abrindo…'
+                : React.createElement(
+                  React.Fragment,
+                  null,
+                  React.createElement(
+                    'svg',
+                    { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', style: { display: 'inline', verticalAlign: 'middle', marginRight: 6 } },
+                    React.createElement('path', { d: 'M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z', stroke: '#0d0d0d', strokeWidth: 2 }),
+                    React.createElement('path', { d: 'M14 2v6h6', stroke: '#0d0d0d', strokeWidth: 2 }),
+                  ),
+                  'Baixar PDF',
+                ),
+            ),
+            React.createElement(
+              'button',
+              { type: 'button', style: webStyles.detailDocBtn, onClick: () => void refetchSpedyNf() },
+              'Atualizar',
+            ),
+          );
+        })(),
         React.createElement('button', {
           type: 'button',
           style: webStyles.detailDocBtn,
@@ -767,7 +970,26 @@ export default function ViagemDetalheScreen() {
     resumoRow(
       resumoCell(iconBag, 'Despesas', '—'),
       resumoCell(iconChart, 'Km da viagem', distKmLabel),
-      resumoCell(iconPeople, '', '', true)));
+      resumoCell(iconPeople, '', '', true)),
+    detail && String(detail.listItem?.bookingId ?? '').trim()
+      ? resumoRow(
+        resumoCell(
+          iconMoney,
+          'Método de pagamento',
+          detail.paymentMethod === 'cash' ? 'Dinheiro' : detail.paymentMethod === 'pix' ? 'Pix' : 'Cartão',
+        ),
+        resumoCell(
+          iconChart,
+          'Abate extra (Connect)',
+          detail.platformFeeExtraDebitCents > 0 ? fmtBRL(detail.platformFeeExtraDebitCents) : '—',
+        ),
+        resumoCell(
+          iconMoney,
+          'Taxa admin (snapshot)',
+          detail.adminEarningCents > 0 ? fmtBRL(detail.adminEarningCents) : '—',
+        ),
+      )
+      : null);
 
   const ocupacaoSection = React.createElement('div', { style: webStyles.detailSection },
     React.createElement('h2', { style: webStyles.detailSectionTitle }, 'Ocupação e desempenho'),
@@ -792,7 +1014,7 @@ export default function ViagemDetalheScreen() {
         React.createElement('span', { style: webStyles.detailPerfCardValue }, distKmLabel))));
 
   // ── Encomendas conforme Figma: linhas horizontais ──────────────────
-  const encField = (label: string, value: string, multiline?: boolean) =>
+  const encField = (label: string, value: string, multiline?: boolean, valueTitle?: string) =>
     React.createElement('div', { style: { flex: '1 1 0', minWidth: 0 } },
       React.createElement('div', { style: { fontSize: 12, color: '#767676', fontFamily: 'Inter, sans-serif', lineHeight: 1.5 } }, label),
       React.createElement('div', {
@@ -802,6 +1024,7 @@ export default function ViagemDetalheScreen() {
             ? { whiteSpace: 'normal' as const, wordBreak: 'break-word' as const }
             : { overflow: 'hidden', textOverflow: 'ellipsis' as const, whiteSpace: 'nowrap' as const }),
         },
+        ...(valueTitle ? { title: valueTitle } : {}),
       }, value));
 
   const shipmentRow = (s: TripShipmentListItem) => {
@@ -856,6 +1079,7 @@ export default function ViagemDetalheScreen() {
         s.photoUrl
           ? React.createElement('img', { src: s.photoUrl, alt: '', style: { width: 44, height: 44, borderRadius: 8, objectFit: 'cover' as const, flexShrink: 0 } })
           : React.createElement('div', { style: { width: 44, height: 44, borderRadius: 8, background: '#e2e2e2', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, flexShrink: 0 } }, '\u{1F4E6}'),
+        encField('ID:', `#${String(s.id).slice(0, 8)}`, false, s.id),
         encField('Tamanho:', sizeLabel),
         encField('Valor:', fmtBRL(s.amountCents)),
         encField('Remetente:', s.senderName),
@@ -897,35 +1121,6 @@ export default function ViagemDetalheScreen() {
           'Não há encomendas associadas a esta viagem agendada. Envios aparecem aqui quando estão atribuídos à mesma viagem do motorista.')
       : React.createElement('div', { style: { display: 'flex', flexDirection: 'column' as const, gap: 16 } },
           ...linkedShipments.map(shipmentRow)));
-
-  const bookingPinSection = detail?.pickupCode?.trim()
-    ? React.createElement(
-        'div',
-        {
-          style: {
-            borderBottom: '1px solid #e2e2e2',
-            paddingBottom: 32,
-            width: '100%',
-          },
-        },
-        React.createElement('h2', { style: webStyles.detailSectionTitle }, 'PIN da reserva (passageiros)'),
-        adminPinChipRow('Embarque — passageiro informa ao motorista', detail.pickupCode, null),
-        React.createElement(
-          'p',
-          {
-            style: {
-              fontSize: 13,
-              color: '#767676',
-              fontFamily: 'Inter, sans-serif',
-              marginTop: 10,
-              lineHeight: 1.5,
-              maxWidth: 720,
-            },
-          },
-          'Campo `bookings.pickup_code`. Encomendas na mesma viagem têm PINs próprios na secção «Encomendas».',
-        ),
-      )
-    : null;
 
   const imageZoomModal = imageZoomOpen
     ? React.createElement('div', {
@@ -1066,7 +1261,6 @@ export default function ViagemDetalheScreen() {
       firstSection,
       resumoSection,
       ocupacaoSection,
-      bookingPinSection,
       ...contextSections),
     imageZoomModal,
     docToastEl);

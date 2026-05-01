@@ -82,6 +82,9 @@ export interface ExcursionRequestRow {
   created_at: string;
 }
 
+/** Método de pagamento da reserva (`bookings.payment_method`: cartão / Pix / dinheiro). */
+export type BookingPaymentMethod = 'card' | 'pix' | 'cash';
+
 export interface ViagemListItem {
   bookingId: string;
   passageiro: string;
@@ -105,7 +108,20 @@ export interface ViagemListItem {
   amountCents: number;
   /** De `scheduled_trips.trunk_occupancy_pct`; 0 se ausente */
   trunkOccupancyPct: number;
+  /** `bookings.payment_method` quando a coluna existir; senão `card`. */
+  paymentMethod: BookingPaymentMethod;
+  /** Abate extra na corrida Connect (`bookings.platform_fee_extra_debit_cents`). */
+  platformFeeExtraDebitCents: number;
+  /** Preenchido em algumas listagens quando o perfil do cliente expõe foto. */
+  passageiroAvatarUrl?: string | null;
 }
+
+/** Item retornado pela Edge `lookup-spedy-invoice` (NF-e ou NFS-e na Spedy). */
+export type SpedyInvoiceLookupItem = {
+  id: string;
+  status: string;
+  model: 'productInvoice' | 'serviceInvoice';
+};
 
 /** Detalhe admin de uma reserva (viagem) — origem/destino completos e metadados. */
 export interface BookingDetailForAdmin {
@@ -142,7 +158,42 @@ export interface BookingDetailForAdmin {
   supportConversationId: string | null;
   /** `bookings.pickup_code` — PIN de embarque passageiro → motorista (viagem comum). */
   pickupCode: string | null;
+  /** `bookings.stripe_payment_intent_id` — usado para localizar NF na Spedy (integração Stripe). */
+  stripePaymentIntentId: string | null;
+  /** `bookings.payment_method`. */
+  paymentMethod: BookingPaymentMethod;
+  /** Abate de dívida de taxa nesta corrida Connect. */
+  platformFeeExtraDebitCents: number;
+  /** Taxa admin da viagem (snapshot em `bookings.admin_earning_cents`). */
+  adminEarningCents: number;
 }
+
+/** Linha de `driver_platform_fee_ledger` (taxa plataforma em dinheiro / abates). */
+export interface DriverPlatformFeeLedgerRow {
+  id: string;
+  workerId: string;
+  bookingId: string | null;
+  kind: 'credit' | 'debit';
+  amountCents: number;
+  note: string;
+  createdAt: string;
+}
+
+/** Motorista com saldo devido à plataforma (`worker_profiles.platform_fee_owed_cents > 0`). */
+export interface MotoristaPlatformFeeDebtItem {
+  id: string;
+  nome: string;
+  platformFeeOwedCents: number;
+}
+
+/** Estado Stripe Connect exibido no painel do motorista. */
+export type WorkerConnectStatus = {
+  accountId: string | null;
+  chargesEnabled: boolean;
+  payoutsEnabled: boolean;
+  detailsSubmitted: boolean;
+  notifiedApprovedAt: string | null;
+};
 
 /** Shipment ligado à viagem (`scheduled_trip_id`) — lista no detalhe da viagem. */
 export interface TripShipmentListItem {
@@ -476,8 +527,19 @@ export interface PayoutRow {
 
 export interface PagamentoListItem {
   id: string;
+  workerId: string;
+  /** Mesma ideia que MotoristasScreen «Connect OK»: conta + charges + payouts. */
+  workerHasConnect: boolean;
   workerName: string;
   entityType: string;
+  /** Valor bruto de `payouts.entity_type` (ex.: booking, shipment). */
+  entityTypeRaw: string;
+  /** Valor bruto de `payouts.status` (ex.: pending, paid). */
+  statusRaw: string;
+  /** Transfer Stripe explícita (shipment/excursion); booking costuma ficar null. */
+  stripeTransferId: string | null;
+  stripeTransferAt: string | null;
+  stripeTransferError: string | null;
   dataFinalizacao: string;
   /** ISO (paid_at ou created_at) para filtros de período no admin */
   dateAtIso: string;
