@@ -532,12 +532,39 @@ export default function ViagemDetalheScreen() {
     return () => { cancel = true; };
   }, [resolvedScheduledTripId]);
 
+  /** Sem `bookings.id` real mas com envios no trip (detalhe sintético): não listar remetente como passageiro. */
+  const isShipmentOnlyTrip = useMemo(
+    () => Boolean(detail && !String(detail.listItem?.bookingId ?? '').trim() && linkedShipments.length > 0),
+    [detail, linkedShipments],
+  );
+
+  const moneyResumo = useMemo(() => {
+    if (!detail) {
+      return { displayTotal: 0, displayUnit: 0, resumoUnitLabel: 'Valor unitário' as const };
+    }
+    const shipSum = linkedShipments.reduce((s, sh) => s + Number(sh.amountCents ?? 0), 0);
+    const book = Number(detail.amountCents ?? 0);
+    const displayTotal = book + shipSum;
+    const hasBk = Boolean(String(detail.listItem?.bookingId ?? '').trim());
+    const shipOnly = !hasBk && linkedShipments.length > 0;
+    const pc = Math.max(1, Number(detail.passengerCount ?? 1));
+    let displayUnit = displayTotal;
+    if (shipOnly && linkedShipments.length > 0) {
+      displayUnit = Math.round(displayTotal / linkedShipments.length);
+    } else if (hasBk && pc > 0) {
+      displayUnit = Math.round(displayTotal / pc);
+    }
+    const resumoUnitLabel = shipOnly && linkedShipments.length > 0 ? 'Valor médio por encomenda' : 'Valor unitário';
+    return { displayTotal, displayUnit, resumoUnitLabel };
+  }, [detail, linkedShipments]);
+
   /** Alinhado a `bookings.passenger_count`: titular + extras em `passenger_data`, sem duplicar nome do titular. */
   const passengerDisplayRows = useMemo(() => {
     type Row = { name: string; pData?: { name?: string; cpf?: string; bags?: number } };
     if (!detail) {
       return t ? [{ name: t.passageiro }] as Row[] : [];
     }
+    if (isShipmentOnlyTrip) return [];
     const count = Math.max(1, Number(detail.passengerCount) || 1);
     const primary = (detail.listItem.passageiro || 'Sem nome').trim();
     const primaryKey = primary.toLowerCase();
@@ -556,7 +583,7 @@ export default function ViagemDetalheScreen() {
       rows.push({ name: nm, pData: p });
     }
     return rows;
-  }, [detail, t]);
+  }, [detail, t, isShipmentOnlyTrip]);
 
   const bestSpedyInvoice = useMemo(() => pickBestSpedyInvoice(spedyNf.invoices), [spedyNf.invoices]);
 
@@ -667,7 +694,7 @@ export default function ViagemDetalheScreen() {
           : 1;
     const bagLabel = bags <= 1 ? 'Pequena' : bags <= 2 ? 'Média' : 'Grande';
     const unitPrice = detail && detail.passengerCount > 0
-      ? fmtBRL(Math.round((detail.amountCents ?? 0) / detail.passengerCount))
+      ? fmtBRL(Math.round(moneyResumo.displayTotal / detail.passengerCount))
       : 'R$ 150,00';
     const cpfLabel = pData?.cpf ? `CPF: ${pData.cpf}` : '';
 
@@ -775,13 +802,15 @@ export default function ViagemDetalheScreen() {
         )
       : null;
 
-  const passageirosSection = React.createElement('div', { style: webStyles.detailPassageirosSection },
-    React.createElement('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', marginBottom: 16 } },
-      React.createElement('h2', { style: { ...webStyles.detailSectionTitle, margin: 0 } }, 'Passageiros'),
-      passageirosChevronBtn),
-    bookingPickupPinBlock,
-    React.createElement('div', { style: { display: 'flex', gap: 24, overflowX: 'auto' as const } },
-      ...passengerDisplayRows.map((row, i) => passageiroCard(row, i))));
+  const passageirosSection = !isShipmentOnlyTrip
+    ? React.createElement('div', { style: webStyles.detailPassageirosSection },
+      React.createElement('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', marginBottom: 16 } },
+        React.createElement('h2', { style: { ...webStyles.detailSectionTitle, margin: 0 } }, 'Passageiros'),
+        passageirosChevronBtn),
+      bookingPickupPinBlock,
+      React.createElement('div', { style: { display: 'flex', gap: 24, overflowX: 'auto' as const } },
+        ...passengerDisplayRows.map((row, i) => passageiroCard(row, i))))
+    : null;
 
   const podeAcompanharTempoReal = t.status === 'em_andamento';
 
@@ -1026,8 +1055,9 @@ export default function ViagemDetalheScreen() {
     React.createElement('path', { d: 'M3 17l6-6 4 4 8-8', stroke: '#0d0d0d', strokeWidth: 1.5, strokeLinecap: 'round', strokeLinejoin: 'round' }));
 
   const bookingIdLabel = v?.bookingId ? `#${String(v.bookingId).slice(0, 8)}` : (isMockTrip ? '#123456' : (id ? `#${String(id).slice(0, 8)}` : '—'));
-  const totalCents = detail?.amountCents ?? (isMockTrip ? 15430 : 0);
-  const unitCents = detail && detail.passengerCount > 0 ? Math.round(totalCents / detail.passengerCount) : (isMockTrip ? 8000 : totalCents);
+  const totalCents = isMockTrip ? 15430 : (detail ? moneyResumo.displayTotal : 0);
+  const unitCents = isMockTrip ? 8000 : (detail ? moneyResumo.displayUnit : 0);
+  const resumoUnitLabel = isMockTrip ? 'Valor unitário' : moneyResumo.resumoUnitLabel;
   const dur = detail?.tripDepartureAtIso && detail?.tripArrivalAtIso
     ? tripDurationMin(detail.tripDepartureAtIso, detail.tripArrivalAtIso)
     : v
@@ -1048,8 +1078,8 @@ export default function ViagemDetalheScreen() {
       resumoCell(iconCalendar, 'Data', t.data)),
     resumoRow(
       resumoCell(iconClock, 'Duração', dur),
-      resumoCell(iconBag, 'Valor unitário', fmtBRL(unitCents)),
-      resumoCell(iconPeople, 'Total de passageiros', `${detail?.passengerCount ?? 1} pessoa(s)`)),
+      resumoCell(iconBag, resumoUnitLabel, fmtBRL(unitCents)),
+      resumoCell(iconPeople, 'Total de passageiros', `${isShipmentOnlyTrip ? 0 : (detail?.passengerCount ?? 1)} pessoa(s)`)),
     resumoRow(
       resumoCell(iconBag, 'Despesas', '—'),
       resumoCell(iconChart, 'Km da viagem', distKmLabel),
@@ -1310,11 +1340,12 @@ export default function ViagemDetalheScreen() {
         },
       }, 'Confirmar substituição')));
 
-  const contextSections = isMotoristas
+  const contextSections = (isMotoristas
     ? [motoristasDispSection, passageirosSection, encomendasSection]
     : isPassageiros
-    ? [passageirosSection, motoristaSection, encomendasSection]
-    : [motoristaSection, passageirosSection, encomendasSection];
+      ? [passageirosSection, motoristaSection, encomendasSection]
+      : [motoristaSection, passageirosSection, encomendasSection]
+  ).filter(Boolean) as React.ReactElement[];
 
   const docToastEl = docActionToast
     ? React.createElement('div', {

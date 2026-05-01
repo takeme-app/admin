@@ -522,6 +522,23 @@ export type FetchBookingDetailForAdminOpts = {
   preferShipmentId?: string | null;
 };
 
+/**
+ * Várias reservas podem partilhar o mesmo `scheduled_trip_id`. A mais antiga (`limit(1)` asc) pode ser
+ * teste/cancelada sem `pickup_code`, escondendo o PIN no admin em viagens «Em andamento» abertas por `tripId`.
+ * Preferimos reserva com PIN; senão a mais recente.
+ */
+function pickBookingRowForTripDetail(rows: any[] | null | undefined): any | null {
+  if (!rows?.length) return null;
+  const withPin = rows.find((r) => String(r?.pickup_code ?? '').trim());
+  if (withPin) return withPin;
+  const sorted = [...rows].sort((a, b) => {
+    const ta = new Date(a?.created_at ?? 0).getTime();
+    const tb = new Date(b?.created_at ?? 0).getTime();
+    return tb - ta;
+  });
+  return sorted[0] ?? null;
+}
+
 export async function fetchBookingDetailForAdmin(
   bookingOrTripId: string,
   opts?: FetchBookingDetailForAdminOpts,
@@ -541,9 +558,9 @@ export async function fetchBookingDetailForAdmin(
       .from('bookings')
       .select(sel)
       .eq('scheduled_trip_id', bookingOrTripId)
-      .order('created_at', { ascending: true })
-      .limit(1);
-    b = (r2.data?.[0] as any) ?? null;
+      .order('created_at', { ascending: false })
+      .limit(40);
+    b = pickBookingRowForTripDetail(r2.data as any[] | undefined) ?? null;
   }
   if (!b) {
     b = await syntheticBookingRowForScheduledTrip(bookingOrTripId, opts?.preferShipmentId);
