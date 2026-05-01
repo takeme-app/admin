@@ -186,6 +186,57 @@ function adminPinChipRow(
   );
 }
 
+/** Variante compacta do PIN dentro de cada card (vários passageiros, mesmo código da reserva). */
+function adminPinChipRowCompact(
+  label: string,
+  code: string | null | undefined,
+  footnote?: string | null,
+): React.ReactElement {
+  return React.createElement(
+    'div',
+    { style: { display: 'flex', flexDirection: 'column' as const, gap: 6 } },
+    React.createElement(
+      'div',
+      { style: { fontSize: 11, color: '#767676', fontFamily: 'Inter, sans-serif', lineHeight: 1.35 } },
+      label,
+    ),
+    React.createElement(
+      'div',
+      { style: { display: 'flex', gap: 4 } },
+      ...pinCharsForDisplay(code).map((ch, i) =>
+        React.createElement(
+          'div',
+          {
+            key: `adm-pc-${label}-${i}`,
+            style: {
+              minWidth: 28,
+              height: 36,
+              borderRadius: 6,
+              border: '1px solid #d4d4d4',
+              background: '#fff',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 15,
+              fontWeight: 700,
+              fontFamily: 'ui-monospace, Menlo, monospace',
+              color: '#0d0d0d',
+            },
+          },
+          ch,
+        ),
+      ),
+    ),
+    footnote
+      ? React.createElement(
+          'div',
+          { style: { fontSize: 10, color: '#a3a3a3', fontFamily: 'Inter, sans-serif', fontStyle: 'italic' as const, lineHeight: 1.35 } },
+          footnote,
+        )
+      : null,
+  );
+}
+
 export default function ViagemDetalheScreen() {
   const { id, eid } = useParams<{ id: string; eid?: string }>();
   const location = useLocation();
@@ -602,6 +653,9 @@ export default function ViagemDetalheScreen() {
     }),
   );
 
+  const pickupCodeTrimmed = detail?.pickupCode?.trim() ?? '';
+  const nPassengersListed = passengerDisplayRows.length;
+
   const passageiroCard = (row: { name: string; pData?: { name?: string; cpf?: string; bags?: number } }, idx: number) => {
     const name = row.name;
     const pData = row.pData;
@@ -616,6 +670,29 @@ export default function ViagemDetalheScreen() {
       ? fmtBRL(Math.round((detail.amountCents ?? 0) / detail.passengerCount))
       : 'R$ 150,00';
     const cpfLabel = pData?.cpf ? `CPF: ${pData.cpf}` : '';
+
+    const pickupInlineBlock = pickupCodeTrimmed
+      ? nPassengersListed <= 1
+        ? React.createElement(
+            'div',
+            { style: { paddingTop: 12, width: '100%', boxSizing: 'border-box' as const } },
+            adminPinChipRow(
+              'Código de embarque da reserva — informar ao motorista',
+              pickupCodeTrimmed,
+              null,
+              'Todos os passageiros desta reserva partilham este PIN. Encomendas na mesma viagem: ver PINs na secção «Encomendas».',
+            ),
+          )
+        : React.createElement(
+            'div',
+            { style: { paddingTop: 12, width: '100%', boxSizing: 'border-box' as const } },
+            adminPinChipRowCompact(
+              'Embarque — código da reserva (igual para todos)',
+              pickupCodeTrimmed,
+              'Mesmo código indicado acima nesta secção.',
+            ),
+          )
+      : null;
 
     return React.createElement('div', { key: `pax-${idx}-${name}`, style: { background: '#f6f6f6', borderRadius: 12, padding: 16, minWidth: 280, maxWidth: 330, flex: '1 1 280px', display: 'flex', flexDirection: 'column' as const, gap: 0 } },
       React.createElement('div', { style: { display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, paddingBottom: 12, borderBottom: '1px solid #e2e2e2', width: '100%', boxSizing: 'border-box' as const } },
@@ -649,7 +726,8 @@ export default function ViagemDetalheScreen() {
             onClick: () => { void handleBookingSupportClick(); },
           }, atendimentoIconSvg)
           : null),
-      React.createElement('div', { style: { display: 'flex', flexDirection: 'column' as const, gap: 4, paddingTop: 12 } },
+      pickupInlineBlock,
+      React.createElement('div', { style: { display: 'flex', flexDirection: 'column' as const, gap: 4, paddingTop: 12, borderTop: pickupInlineBlock ? '1px solid #e2e2e2' : 'none', width: '100%', boxSizing: 'border-box' as const } },
         React.createElement('div', { style: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' } },
           React.createElement('span', { style: { fontSize: 14, color: '#767676', fontFamily: 'Inter, sans-serif' } }, 'Mala'),
           React.createElement('span', { style: { fontSize: 16, fontWeight: 600, color: '#0d0d0d', fontFamily: 'Inter, sans-serif' } }, bagLabel)),
@@ -668,29 +746,34 @@ export default function ViagemDetalheScreen() {
   },
     React.createElement('svg', { width: 20, height: 20, viewBox: '0 0 24 24', fill: 'none', style: { display: 'block' } },
       React.createElement('path', { d: 'M9 18l6-6-6-6', stroke: '#0d0d0d', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' })));
-  /** PIN `bookings.pickup_code` — único por reserva; fica na secção Passageiros, acima dos cards (não por passageiro). */
-  const bookingPickupPinBlock = detail?.pickupCode?.trim()
-    ? React.createElement(
-        'div',
-        { style: { width: '100%', marginBottom: 20 } },
-        adminPinChipRow('Embarque — passageiro informa ao motorista (único para esta reserva)', detail.pickupCode, null),
-        React.createElement(
-          'p',
-          {
-            style: {
-              fontSize: 13,
-              color: '#767676',
-              fontFamily: 'Inter, sans-serif',
-              marginTop: 10,
-              marginBottom: 0,
-              lineHeight: 1.5,
-              maxWidth: 720,
+  /** PIN `bookings.pickup_code` — único por reserva; acima dos cards só quando há 2+ passageiros (1 pax: PIN só dentro do card). */
+  const bookingPickupPinBlock =
+    pickupCodeTrimmed && nPassengersListed > 1
+      ? React.createElement(
+          'div',
+          { style: { width: '100%', marginBottom: 20 } },
+          adminPinChipRow(
+            'Código de embarque da reserva — informar ao motorista',
+            pickupCodeTrimmed,
+            null,
+          ),
+          React.createElement(
+            'p',
+            {
+              style: {
+                fontSize: 13,
+                color: '#767676',
+                fontFamily: 'Inter, sans-serif',
+                marginTop: 10,
+                marginBottom: 0,
+                lineHeight: 1.5,
+                maxWidth: 720,
+              },
             },
-          },
-          'O mesmo código vale para todos os passageiros desta reserva. Encomendas na mesma viagem têm PINs na secção «Encomendas».',
-        ),
-      )
-    : null;
+            'Um único PIN para todos os passageiros desta reserva (não há código distinto por pessoa). Encomendas na mesma viagem têm PINs próprios na secção «Encomendas».',
+          ),
+        )
+      : null;
 
   const passageirosSection = React.createElement('div', { style: webStyles.detailPassageirosSection },
     React.createElement('div', { style: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', width: '100%', marginBottom: 16 } },
