@@ -121,7 +121,6 @@ export async function createPricingRoute(body: {
   price_cents: number;
   driver_pct?: number;
   admin_pct?: number;
-  accepted_payment_methods?: string[];
   surcharges?: Array<{ surcharge_id: string; value_cents?: number }>;
 }) {
   return invokeEdgeFunction('manage-pricing-routes', 'POST', undefined, body);
@@ -1200,17 +1199,10 @@ export interface PreparerEncTrechoRow {
   retLinha2: string;
   valorKm: string;
   pctAdmin: string;
-  pagamento: string;
 }
 
 export function pricingRoutesToPreparerEncRows(routes: PricingRouteRow[]): PreparerEncTrechoRow[] {
   const fmtMoney = (c: number) => `R$ ${(c / 100).toFixed(2).replace('.', ',')}`;
-  const fmtPay = (methods: string[] | null | undefined) =>
-    (methods || [])
-      .map((m) =>
-        m === 'pix' ? 'Pix' : m === 'credit_card' ? 'Crédito' : m === 'debit_card' ? 'Débito' : String(m),
-      )
-      .join(', ') || '—';
   return routes.map((r) => ({
     origem: r.origin_address || '—',
     destino: r.destination_address || '—',
@@ -1221,7 +1213,6 @@ export function pricingRoutesToPreparerEncRows(routes: PricingRouteRow[]): Prepa
     retLinha2: '',
     valorKm: r.pricing_mode === 'per_km' ? fmtMoney(r.price_cents) : '—',
     pctAdmin: `${r.admin_pct ?? 0}%`,
-    pagamento: fmtPay(r.accepted_payment_methods),
   }));
 }
 

@@ -10,7 +10,6 @@ import {
   webStyles,
   filterIconSvg,
 } from '../styles/webStyles';
-import EditarFormaPagamentoTrechoModal from '../components/EditarFormaPagamentoTrechoModal';
 import { preparadorEncomendaSlug } from '../utils/preparadorSlug';
 import {
   fetchPricingRoutes,
@@ -509,17 +508,7 @@ export default function PagamentosGestaoScreen() {
   const [draftDataIniGest, setDraftDataIniGest] = useState('');
   const [draftDataFimGest, setDraftDataFimGest] = useState('');
 
-  const [editPagamentoOpen, setEditPagamentoOpen] = useState(false);
-
-  const fecharEditPagamento = useCallback(() => setEditPagamentoOpen(false), []);
-
-  const abrirEditPagamento = useCallback(() => {
-    setFiltroGestaoOpen(false);
-    setEditPagamentoOpen(true);
-  }, []);
-
   const abrirFiltroGestao = useCallback(() => {
-    setEditPagamentoOpen(false);
     if (filtroGestaoAtivo) {
       setDraftPeriodoGest(appliedGestaoFiltro.periodo);
       setDraftPrimarioGest(appliedGestaoFiltro.primario);
@@ -721,19 +710,7 @@ export default function PagamentosGestaoScreen() {
           fontSize: 14, fontWeight: 500, color: '#0d0d0d', cursor: 'pointer', ...font,
         },
       }, filterIconSvg, 'Filtro'),
-      (activeTab === 'Motorista' || activeTab === 'Preparadores') ? React.createElement('button', {
-        type: 'button',
-        onClick: abrirEditPagamento,
-        style: {
-          display: 'flex', alignItems: 'center', gap: 8, height: 44, padding: '0 20px',
-          background: '#fff', border: '1px solid #e2e2e2', borderRadius: 999,
-          fontSize: 14, fontWeight: 500, color: '#0d0d0d', cursor: 'pointer', ...font,
-        },
-      },
-        React.createElement('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', style: { display: 'block' } },
-          React.createElement('path', { d: 'M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7', stroke: '#0d0d0d', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' }),
-          React.createElement('path', { d: 'M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z', stroke: '#0d0d0d', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' })),
-        'Editar forma de pagamento') : null,
+      null,
       (activeTab === 'Trecho' || activeTab === 'Adicionais' || activeTab === 'Bases')
         ? React.createElement('button', {
             type: 'button',
@@ -1938,7 +1915,6 @@ export default function PagamentosGestaoScreen() {
 
   return React.createElement(React.Fragment, null,
     breadcrumb, headerRow, tabsEl, ...tabContent, filtroGestaoModal,
-    React.createElement(EditarFormaPagamentoTrechoModal, { open: editPagamentoOpen, onClose: fecharEditPagamento }),
     editEncModal, removeEncModal, editAdicModal, removeAdicModal, criarAdicModal, filtroEncModal, filtroTrechoModal, filtroAdicModal, filtroAvalModal,
     criarBaseModal, editBaseModal, removeBaseModal, filtroBaseModal);
 }
